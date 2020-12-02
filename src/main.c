@@ -114,7 +114,17 @@ int main(void) {
 
 		if(result2 < 0) { abort(); }
 
-		// TODO: block for a second for generating the next transfer and increase uptime
+		// Block for a second for generating the next transfer and increase uptime
+		uint64_t initial_time = LPIT0_GetTimestamp();
+		uint64_t delta = 0;
+		const uint64_t cycles_second = 80e6;
+
+		while(delta < cycles_second)
+		{
+			uint64_t cur_time = LPIT0_GetTimestamp();
+			delta = cur_time - initial_time;
+		}
+
 		test_uptimeSec++;
 	}
 
