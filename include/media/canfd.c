@@ -183,6 +183,11 @@ static inline void S32_NVIC_SetPriority(IRQn_Type IRQn, uint32_t priority)
     S32_NVIC->IP[((uint32_t)(int32_t)IRQn)] = (uint8_t)((priority << (8U - __NVIC_PRIO_BITS)) & (uint32_t)0xFFUL);
 }
 
+// Macro for swapping from little-endian to big- endian a 32-bit word
+#if defined (__GNUC__) || defined (__ICCARM__) || defined (__ghs__) || defined (__ARMCC_VERSION)
+#define REV_BYTES_WORD(a, b) __asm volatile ("rev %0, %1" : "=r" (b) : "r" (a))
+#endif
+
 status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, void (*callback)())
 {
 	/* Look-up the timings profile */
@@ -297,27 +302,36 @@ status_t FlexCAN0_Install_ID (uint32_t id, uint8_t mb_index)
 
 status_t FlexCAN0_Send(fdframe_t* frame)
 {
+	// Verify Inactive message buffer and Valid Priority Status flags
+	if( !(CAN0->CAN0_ESR2_b.IMB && CAN0->CAN0_ESR2_b.VPS) )
+	{
+		return FAILURE; // there are no available message buffers
+	}
+
+	// Get the lowest number index available message buffer
+	uint8_t mb_index = CAN0->CAN0_ESR2_b.LPTM;
+
 	/* get the frame's payload_length */
 	uint32_t payload_length = FlexCANDLCtoLength[frame->DLC];
 
     /* Set the frame's destination ID */
-    CAN0_MB->FD_MessageBuffer[TX_MB].EXT_ID = frame->EXTENDED_ID;
+    CAN0_MB->FD_MessageBuffer[mb_index].EXT_ID = frame->EXTENDED_ID;
 
     /* Configure transmission message buffer. See "Message Buffer Structure" in RM */
-    CAN0_MB->FD_MessageBuffer[TX_MB].EDL =  1;			/* Extended data length */
-    CAN0_MB->FD_MessageBuffer[TX_MB].BRS =  1;			/* Bit-rate switch */
-    CAN0_MB->FD_MessageBuffer[TX_MB].ESI =  0;			/* No applies */
-    CAN0_MB->FD_MessageBuffer[TX_MB].SRR =  0;			/* No applies */
-    CAN0_MB->FD_MessageBuffer[TX_MB].IDE =  1;			/* Extended ID */
-    CAN0_MB->FD_MessageBuffer[TX_MB].RTR =  0;			/* No remote request made */
-    CAN0_MB->FD_MessageBuffer[TX_MB].DLC = 0xF;			/* 64 bytes of payload */
-    CAN0_MB->FD_MessageBuffer[TX_MB].CODE = 0xC; 	    /* After TX, the MB automatically returns to the INACTIVE state */
+    CAN0_MB->FD_MessageBuffer[mb_index].EDL =  1;			/* Extended data length */
+    CAN0_MB->FD_MessageBuffer[mb_index].BRS =  1;			/* Bit-rate switch */
+    CAN0_MB->FD_MessageBuffer[mb_index].ESI =  0;			/* No applies */
+    CAN0_MB->FD_MessageBuffer[mb_index].SRR =  0;			/* No applies */
+    CAN0_MB->FD_MessageBuffer[mb_index].IDE =  1;			/* Extended ID */
+    CAN0_MB->FD_MessageBuffer[mb_index].RTR =  0;			/* No remote request made */
+    CAN0_MB->FD_MessageBuffer[mb_index].DLC = 0xF;			/* 64 bytes of payload */
+    CAN0_MB->FD_MessageBuffer[mb_index].CODE = 0xC; 	    /* After TX, the MB automatically returns to the INACTIVE state */
 
     /* After a successful transmission the interrupt flag of the corresponding message buffer is set */
-    while(!(CAN0->CAN0_IFLAG1_b.BUF0I));
+    while(!(CAN0->CAN0_IFLAG1 & (1u << mb_index)));
 
     /* Clear the flag previously polled (W1C register) */
-    CAN0->CAN0_IFLAG1_b.BUF0I = 1;
+    CAN0->CAN0_IFLAG1 = (1u << mb_index);
 
 	return SUCCESS;
 }
@@ -336,10 +350,8 @@ void CAN0_ORed_0_15_MB_IRQHandler(void)
 
 void CAN1_ORed_0_15_MB_IRQHandler(void)
 {
-
 	// Execute callback
 	FlexCAN1_reception_callback_ptr();
-
 }
 
 
