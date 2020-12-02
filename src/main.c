@@ -10,8 +10,8 @@
  * The files that are particular to this demo application are in the \src folder rather
  * than in the \include, where are the general libraries and headers.
  *
- * test of a comppund data type
- * particular is s32k146_bitfields.h
+ * Transmits an UAVCAN Heartbeat message between two UCANS32K146 boards.
+ *
  */
 
 #include "uavcan\node\Heartbeat_1_0.h"
