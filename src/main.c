@@ -22,9 +22,9 @@
 #include "clocks\SCG.h"
 #include "S32K146_bitfields.h"
 
-#define FRAME_UNLOAD_FREQ     (8u)
-#define FRAME_UNLOAD_IRQ_PRIO (2u)
-#define FLEXCAN_RX_IRQ_PRIO   (1u)
+#define FRAME_UNLOAD_PERIOD_MILI (50u)
+#define FRAME_UNLOAD_IRQ_PRIO 	 (2u)
+#define FLEXCAN_RX_IRQ_PRIO   	 (1u)
 
 // Linker file symbols for o1heap allcator
 extern void* __HeapBase;
@@ -78,7 +78,7 @@ int main(void) {
 	FlexCAN0_Init(CANFD_1MB_4MB_PLL, FLEXCAN_RX_IRQ_PRIO, FlexCAN0_reception_callback);
 
 	// Setup IRQ for processing the TX queue
-	LPIT0_Ch2_IRQ_Config(FRAME_UNLOAD_FREQ, FRAME_UNLOAD_IRQ_PRIO, process_canard_TX_queue);
+	LPIT0_Ch2_IRQ_Config(FRAME_UNLOAD_PERIOD_MILI, FRAME_UNLOAD_IRQ_PRIO, process_canard_TX_queue);
 
 	for(;;)
 	{
@@ -179,7 +179,6 @@ void UCANS32K146_PIN_MUX(void)
     PCC->PCC_PORTE_b.CGC = PCC_PCC_PORTE_CGC_1;   /* Clock gating to PORT E */
     PORTE->PORTE_PCR4_b.MUX = PORTE_PCR4_MUX_101; /* CAN0_RX at PORT E pin 4 */
     PORTE->PORTE_PCR5_b.MUX = PORTE_PCR5_MUX_101; /* CAN0_TX at PORT E pin 5 */
-
 
     PCC->PCC_PORTA_b.CGC = PCC_PCC_PORTA_CGC_1;   /* Clock gating to PORT A */
     PORTA->PORTA_PCR12_b.MUX = PORTA_PCR12_MUX_011; /* CAN1_RX at PORT A pin 12 */

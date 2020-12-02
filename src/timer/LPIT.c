@@ -62,13 +62,13 @@ uint64_t LPIT0_GetTimestamp(void)
     return monotonic_timestamp;
 }
 
-void LPIT0_Ch2_IRQ_Config(uint32_t interrupt_freq, uint8_t interrupt_priority, void (*callback)())
+void LPIT0_Ch2_IRQ_Config(uint32_t irq_period_milis, uint8_t interrupt_priority, void (*callback)())
 {
 	// Select 32-bit periodic timer mode for channel 2
 	LPIT0->LPIT0_TCTRL2_b.MODE = LPIT0_TCTRL2_MODE_0;
 
-	// Set reload value
-    LPIT0->LPIT0_TVAL2 = interrupt_freq;
+	// Set reload value, having a 80Mhz clock feeding the timer.
+    LPIT0->LPIT0_TVAL2 = (irq_period_milis*80000) - 1u;
 
     // Enable interrupt in LPIT0 module
     LPIT0->LPIT0_MIER_b.TIE2 = LPIT0_MIER_TIE2_1;
