@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include "device_registers.h"
+#include "S32K146.h"
 /**
  * @page misra_violations MISRA-C:2012 violations
  *
