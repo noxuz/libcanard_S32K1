@@ -61,7 +61,7 @@ int main(void) {
 	// Initialization of a canard instance with the previous allocator
 	CanardInstance ins = canardInit(&memAllocate, &memFree);
 	ins.mtu_bytes = CANARD_MTU_CAN_FD;
-	ins.node_id = 0xAB;
+	ins.node_id = 96;
 
 	/* Configure clock source */
 	SCG_SOSC_8MHz_Init();
@@ -164,8 +164,8 @@ void process_canard_TX_queue(void)
 		{
 			/* Instantiate a fdframe for the media layer */
 			fdframe_t txframe;
-			txframe.PAYLOAD = (const uint8_t*)txf->payload; // avoids using memcpy()
-			txframe.DLC = CanardCANLengthToDLC[txf->payload_size];
+			txframe.PAYLOAD = txf->payload;
+			txframe.PAYLOAD_SIZE_BYTES = txf->payload_size;
 			txframe.EXTENDED_ID = txf->extended_can_id;
 
 			/* Send the individual frame and break if no message buffers are available */

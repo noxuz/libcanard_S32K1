@@ -9,13 +9,14 @@
 
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef enum {
-	CANFD_125KB_500KB_XTAL, //poner sample points
+	CANFD_125KB_500KB_XTAL, // Calculate predef sample points
 	CANFD_250KB_500KB_XTAL,
 	CANFD_250KB_1MB_XTAL,
 	CANFD_250KB_1MB_PLL,
@@ -40,13 +41,22 @@ typedef enum
 
 typedef struct {
 	uint32_t EXTENDED_ID;
-	uint16_t TIMESTAMP;
-	uint8_t  DLC;
-	const uint8_t* PAYLOAD;
+	size_t PAYLOAD_SIZE_BYTES;
+	const void* PAYLOAD;
 } fdframe_t;
 
 // Select a profile that is coherent to the closcks sources configured by the application
 status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, void (*callback)());
+
+/*!
+* @brief Setup a message buffer for reception of a specific ID
+*
+* @param [uint32_t id] filter
+*
+* @return Success If the filters were installed correctly
+* @return Failure If the setup couldn't be performed
+*/
+status_t FlexCAN0_Install_ID(uint32_t id, uint8_t mb_index);
 
 status_t FlexCAN0_Send(fdframe_t* frame);
 

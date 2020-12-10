@@ -11,7 +11,7 @@
 /*!
 * @brief Bit field declaration for the transmission and reception message buffers. See "Message Buffer Structure" in RM.
 * 		 NOTE: Since this example manages CAN FD (8 bytes for header and 64 bytes for payload)
-* 		 you have 7 Message Buffers available. The FIFO is not enable.
+* 		 you have 7 Message Buffers available. The FIFO is not enabled.
 */
 typedef struct
 {
@@ -42,6 +42,8 @@ typedef struct
 #define CAN0_MB ((CAN_MB_t*)(CAN0_BASE + 0x80))
 #define CAN1_MB ((CAN_MB_t*)(CAN1_BASE + 0x80))
 
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+
 /*!
 * @brief Structure for the CAN bit timings in nominal and data phases. See "Protocol Timing" in RM (FlexCAN Chapter)
 */
@@ -59,8 +61,17 @@ typedef struct
     uint8_t FRJW;
 } FlexCAN_bit_timings_t;
 
-// LUT for converting form DLC to lenght in bytes
-const uint8_t FlexCANDLCtoLength[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
+// LUT for converting form byte length to DLC in bytes
+const uint8_t FlexCANLengthToDLC[65] = {
+    0,  1,  2,  3,  4,  5,  6,  7,  8,                               // 0-8
+    9,  9,  9,  9,                                                   // 9-12
+    10, 10, 10, 10,                                                  // 13-16
+    11, 11, 11, 11,                                                  // 17-20
+    12, 12, 12, 12,                                                  // 21-24
+    13, 13, 13, 13, 13, 13, 13, 13,                                  // 25-32
+    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,  // 33-48
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,  // 49-64
+};
 
 FlexCAN_bit_timings_t CANFD_bitrate_profile_LUT[CANFD_bitrate_profile_NUM] =
 {
@@ -170,7 +181,6 @@ FlexCAN_bit_timings_t CANFD_bitrate_profile_LUT[CANFD_bitrate_profile_NUM] =
 };
 
 static void (*FlexCAN0_reception_callback_ptr)(void) = 0;
-static void (*FlexCAN1_reception_callback_ptr)(void) = 0;
 
 static inline void S32_NVIC_EnableIRQ(IRQn_Type IRQn)
 {
@@ -185,7 +195,7 @@ static inline void S32_NVIC_SetPriority(IRQn_Type IRQn, uint32_t priority)
 
 // Macro for swapping from little-endian to big- endian a 32-bit word
 #if defined (__GNUC__) || defined (__ICCARM__) || defined (__ghs__) || defined (__ARMCC_VERSION)
-#define REV_BYTES_WORD(a, b) __asm volatile ("rev %0, %1" : "=r" (b) : "r" (a))
+#define S32_REV_BYTES(a, b) __asm volatile ("rev %0, %1" : "=r" (b) : "r" (a))
 #endif
 
 status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, void (*callback)())
@@ -201,7 +211,7 @@ status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, vo
     CAN0->CAN0_CTRL1_b.CLKSRC = CAN0_CTRL1_CLKSRC_1;    	/* Select SYS_CLK as source (80 MHz) */
     CAN0->CAN0_MCR_b.MDIS     = CAN0_MCR_MDIS_0;        	/* Enable FlexCAN peripheral */
     CAN0->CAN0_MCR_b.HALT     = CAN0_MCR_HALT_1;        	/* Request freeze mode entry */
-    CAN0->CAN0_MCR_b.FRZ      = CAN0_MCR_FRZ_1;			/* Enter in freeze mode */
+    CAN0->CAN0_MCR_b.FRZ      = CAN0_MCR_FRZ_1;			    /* Enter in freeze mode */
 
     /* Block for freeze mode entry */
     while(!(CAN0->CAN0_MCR_b.FRZACK));
@@ -286,6 +296,8 @@ status_t FlexCAN0_Install_ID (uint32_t id, uint8_t mb_index)
     /* Configure the ID */
     CAN0_MB->FD_MessageBuffer[mb_index].EXT_ID = id;
 
+    // Enamble IMASK1 register
+
     /* Exit from freeze mode */
     CAN0->CAN0_MCR_b.HALT = CAN0_MCR_HALT_0;
     CAN0->CAN0_MCR_b.FRZ  = CAN0_MCR_FRZ_0;
@@ -311,8 +323,20 @@ status_t FlexCAN0_Send(fdframe_t* frame)
 	// Get the lowest number index available message buffer
 	uint8_t mb_index = CAN0->CAN0_ESR2_b.LPTM;
 
+	// Leverage 32-bit native transfers
+	uint32_t* native_FrameData = (uint32_t*)frame->PAYLOAD;
+
 	/* get the frame's payload_length */
-	uint32_t payload_length = FlexCANDLCtoLength[frame->DLC];
+	uint32_t payloadLength = frame->PAYLOAD_SIZE_BYTES;
+
+    /* Fill up the payload's bytes, including the ones that don't add up to a full word e.g. 1,2,3,5,6,7 byte data
+     * length payloads */
+    for (uint8_t i = 0; i < (payloadLength >> 2) + MIN(1, (payloadLength & 0x3)); i++)
+    {
+        /* FlexCAN natively transmits the bytes in big-endian order, in order to transmit little-endian for UAVCAN,
+         * a byte swap is required */
+    	S32_REV_BYTES(native_FrameData[i], CAN0_MB->FD_MessageBuffer[mb_index].payload[i]);
+    }
 
     /* Set the frame's destination ID */
     CAN0_MB->FD_MessageBuffer[mb_index].EXT_ID = frame->EXTENDED_ID;
@@ -320,18 +344,12 @@ status_t FlexCAN0_Send(fdframe_t* frame)
     /* Configure transmission message buffer. See "Message Buffer Structure" in RM */
     CAN0_MB->FD_MessageBuffer[mb_index].EDL =  1;			/* Extended data length */
     CAN0_MB->FD_MessageBuffer[mb_index].BRS =  1;			/* Bit-rate switch */
-    CAN0_MB->FD_MessageBuffer[mb_index].ESI =  0;			/* No applies */
-    CAN0_MB->FD_MessageBuffer[mb_index].SRR =  0;			/* No applies */
+    CAN0_MB->FD_MessageBuffer[mb_index].ESI =  0;			/* N/A */
+    CAN0_MB->FD_MessageBuffer[mb_index].SRR =  0;			/* N/A */
     CAN0_MB->FD_MessageBuffer[mb_index].IDE =  1;			/* Extended ID */
     CAN0_MB->FD_MessageBuffer[mb_index].RTR =  0;			/* No remote request made */
     CAN0_MB->FD_MessageBuffer[mb_index].DLC = 0xF;			/* 64 bytes of payload */
     CAN0_MB->FD_MessageBuffer[mb_index].CODE = 0xC; 	    /* After TX, the MB automatically returns to the INACTIVE state */
-
-    /* After a successful transmission the interrupt flag of the corresponding message buffer is set */
-    while(!(CAN0->CAN0_IFLAG1 & (1u << mb_index)));
-
-    /* Clear the flag previously polled (W1C register) */
-    CAN0->CAN0_IFLAG1 = (1u << mb_index);
 
 	return SUCCESS;
 }
@@ -346,12 +364,6 @@ void CAN0_ORed_0_15_MB_IRQHandler(void)
 {
 	// Execute callback
 	FlexCAN0_reception_callback_ptr();
-}
-
-void CAN1_ORed_0_15_MB_IRQHandler(void)
-{
-	// Execute callback
-	FlexCAN1_reception_callback_ptr();
 }
 
 
