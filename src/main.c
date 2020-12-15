@@ -21,14 +21,15 @@
 #include "timer\LPIT.h"
 #include "clocks\SCG.h"
 #include "S32K146_bitfields.h"
+#include "s32_core_cm4.h"
 
-#define FRAME_UNLOAD_PERIOD_MILI (50u)
+#define FRAME_UNLOAD_PERIOD_MILI (500u)
 #define FRAME_UNLOAD_IRQ_PRIO 	 (2u)
 #define FLEXCAN_RX_IRQ_PRIO   	 (1u)
 
 // Linker file symbols for o1heap allcator
-extern void* __HeapBase;
-extern size_t HEAP_SIZE;
+void* __HeapBasee = (void*)0x200000a0;
+size_t HEAP_SIZEe = 0x8000;
 
 // allocator and instance declaration for wrappers
 O1HeapInstance* my_allocator;
@@ -43,6 +44,8 @@ void FlexCAN0_reception_callback(void);
 void abort(void);
 void process_canard_TX_queue();
 void UCANS32K146_PIN_MUX();
+void greenLED_init(void);
+void greenLED_toggle(void);
 
 static uint8_t my_message_transfer_id = 0;
 
@@ -56,7 +59,7 @@ uint8_t hbeat_ser_buf[uavcan_node_Heartbeat_1_0_EXTENT_BYTES_];
 int main(void) {
 
 	// Initialization of o1heap allocator for libcanard
-	my_allocator = o1heapInit(__HeapBase, HEAP_SIZE, NULL, NULL);
+	my_allocator = o1heapInit(__HeapBasee, HEAP_SIZEe, NULL, NULL);
 
 	// Initialization of a canard instance with the previous allocator
 	CanardInstance ins = canardInit(&memAllocate, &memFree);
@@ -67,6 +70,10 @@ int main(void) {
 	SCG_SOSC_8MHz_Init();
 	SCG_SPLL_160MHz_Init();
 	SCG_Normal_RUN_Init();
+
+	// Indicative board LED for successful transmission
+	greenLED_init();
+	greenLED_toggle();
 
 	// 64-bit monotonic timer start
 	LPIT0_Timestamping_Timer_Init();
@@ -103,6 +110,7 @@ int main(void) {
 				.port_id = uavcan_node_Heartbeat_1_0_FIXED_PORT_ID_,
 				.remote_node_id = CANARD_NODE_ID_UNSET,
 				.transfer_id = my_message_transfer_id,
+				.payload_size = hbeat_ser_buf_size,
 				.payload = hbeat_ser_buf,
 		};
 
@@ -126,6 +134,9 @@ int main(void) {
 		}
 
 		test_uptimeSec++;
+
+		// Toggle LED at same frequency of transmission
+		greenLED_toggle();
 	}
 
 	return 0;
@@ -204,4 +215,15 @@ void UCANS32K146_PIN_MUX(void)
     PTE->GPIOE_PCOR |= 1 << 10;
 }
 
+void greenLED_init(void)
+{
+	PCC->PCC_PORTD_b.CGC = PCC_PCC_PORTD_CGC_1; 	/* Enable clock for PORTD */
+	PORTD->PORTD_PCR16_b.MUX = PORTE_PCR16_MUX_001; /* Port D16: MUX = GPIO */
+    PTD->GPIOD_PDDR |= 1<<16;                       /* Port D16: Data direction = output  */
 
+}
+
+void greenLED_toggle(void)
+{
+	PTD->GPIOD_PTOR |= 1<<16;
+}

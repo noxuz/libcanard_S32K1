@@ -40,7 +40,6 @@ typedef struct
 * 		 CAN0_BASE + 0x80 is the specific address where the CAN0 MB structure is defined.
 */
 #define CAN0_MB ((CAN_MB_t*)(CAN0_BASE + 0x80))
-#define CAN1_MB ((CAN_MB_t*)(CAN1_BASE + 0x80))
 
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 
@@ -60,6 +59,9 @@ typedef struct
     uint8_t FPSEG2;
     uint8_t FRJW;
 } FlexCAN_bit_timings_t;
+
+// LUT for converting form DLC to byte length in bytes
+const uint8_t FlexCANDLCToLength[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
 
 // LUT for converting form byte length to DLC in bytes
 const uint8_t FlexCANLengthToDLC[65] = {
@@ -198,6 +200,28 @@ static inline void S32_NVIC_SetPriority(IRQn_Type IRQn, uint32_t priority)
 #define S32_REV_BYTES(a, b) __asm volatile ("rev %0, %1" : "=r" (b) : "r" (a))
 #endif
 
+/** \brief  Enable interrupts
+ */
+#if defined (__GNUC__)
+#define S32_ENABLE_INTERRUPTS() __asm volatile ("cpsie i" : : : "memory");
+#else
+#define S32_ENABLE_INTERRUPTS() __asm("cpsie i")
+#endif
+
+
+/** \brief  Disable interrupts
+ */
+#if defined (__GNUC__)
+#define S32_DISABLE_INTERRUPTS() __asm volatile ("cpsid i" : : : "memory");
+#else
+#define S32_DISABLE_INTERRUPTS() __asm("cpsid i")
+#endif
+
+#define BIT_SRV_NOT_MSG(x) (((uint32_t)(x)) << 25)
+#define BIT_R23(x)    	   (((uint32_t)(x)) << 23)
+#define BIT_MSG_R7(x)      (((uint32_t)(x)) << 7)
+
+
 status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, void (*callback)())
 {
 	/* Look-up the timings profile */
@@ -215,6 +239,9 @@ status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, vo
 
     /* Block for freeze mode entry */
     while(!(CAN0->CAN0_MCR_b.FRZACK));
+
+    /* Enable local priority for transmission */
+    CAN0->CAN0_MCR_b.LPRIOEN = CAN0_MCR_LPRIOEN_1;
 
     /* Enable CAN-FD feature in ISO 11898-1 compliance */
     CAN0->CAN0_MCR_b.FDEN = CAN0_MCR_FDEN_1;
@@ -265,14 +292,14 @@ status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, vo
 }
 
 /*!
-* @brief Setup a message buffer for reception of a specific ID
+* @brief Setup a message buffer for reception of a specific ID, 7 available MB
 *
 * @param [uint32_t id] filter
 *
 * @return Success If the filters were installed correctly
 * @return Failure If the setup couldn't be performed
 */
-status_t FlexCAN0_Install_ID (uint32_t id, uint8_t mb_index)
+status_t FlexCAN0_Install_ID(uint32_t id, uint8_t mb_index)
 {
     /* Request freeze mode entry */
     CAN0->CAN0_MCR_b.HALT = CAN0_MCR_HALT_1;
@@ -281,8 +308,9 @@ status_t FlexCAN0_Install_ID (uint32_t id, uint8_t mb_index)
     /* Block for freeze mode entry */
     while(!(CAN0->CAN0_MCR_b.FRZACK));
 
-    /* All-bits care mask */
-    CAN0->CAN0_RXIMR0_b.MI = 0x1FFFFFFF;
+    /* Mask for receiving messages of the particular subject ID of UAVCAN, consult section 4.2.1 of spec */
+    CAN0->CAN0_RXIMR[mb_index] = BIT_SRV_NOT_MSG(1) | BIT_R23(1) |
+    		                         (0x1FFF << 8)  | BIT_MSG_R7(1);
 
     /* Configure reception message buffer. See "Message Buffer Structure" in RM */
     CAN0_MB->FD_MessageBuffer[mb_index].EDL =  1;			/* Extended data length */
@@ -293,10 +321,12 @@ status_t FlexCAN0_Install_ID (uint32_t id, uint8_t mb_index)
     CAN0_MB->FD_MessageBuffer[mb_index].IDE =  1;			/* Extended ID */
     CAN0_MB->FD_MessageBuffer[mb_index].RTR =  0;			/* No remote request made */
 
-    /* Configure the ID */
-    CAN0_MB->FD_MessageBuffer[mb_index].EXT_ID = id;
+    /* Configure the ID for receiving the message */
+    CAN0_MB->FD_MessageBuffer[mb_index].EXT_ID = BIT_SRV_NOT_MSG(0) | BIT_R23(0) |
+    											 (id << 8)          | BIT_MSG_R7(0);
 
-    // Enamble IMASK1 register
+    /* Enable interrupt for reception in the specific message buffer */
+    CAN0->CAN0_IMASK1 |= (1u << mb_index);
 
     /* Exit from freeze mode */
     CAN0->CAN0_MCR_b.HALT = CAN0_MCR_HALT_0;
@@ -311,13 +341,12 @@ status_t FlexCAN0_Install_ID (uint32_t id, uint8_t mb_index)
     /* Success ID installation */
     return SUCCESS;
 }
-
 status_t FlexCAN0_Send(fdframe_t* frame)
 {
 	// Verify Inactive message buffer and Valid Priority Status flags
 	if( !(CAN0->CAN0_ESR2_b.IMB && CAN0->CAN0_ESR2_b.VPS) )
 	{
-		return FAILURE; // there are no available message buffers
+		return FAILURE; // there are no available message buffers, priority inversion may have occurred
 	}
 
 	// Get the lowest number index available message buffer
@@ -341,6 +370,9 @@ status_t FlexCAN0_Send(fdframe_t* frame)
     /* Set the frame's destination ID */
     CAN0_MB->FD_MessageBuffer[mb_index].EXT_ID = frame->EXTENDED_ID;
 
+    /* Set the transmission priority, per the spec, are the bits [28-26] of the id field */
+    CAN0_MB->FD_MessageBuffer[mb_index].PRIO = frame->EXTENDED_ID >> 26;
+
     /* Configure transmission message buffer. See "Message Buffer Structure" in RM */
     CAN0_MB->FD_MessageBuffer[mb_index].EDL =  1;			/* Extended data length */
     CAN0_MB->FD_MessageBuffer[mb_index].BRS =  1;			/* Bit-rate switch */
@@ -362,8 +394,13 @@ extern "C" {
 
 void CAN0_ORed_0_15_MB_IRQHandler(void)
 {
+	// Perform the ISR atomically
+	S32_DISABLE_INTERRUPTS()
+
 	// Execute callback
 	FlexCAN0_reception_callback_ptr();
+
+	S32_ENABLE_INTERRUPTS()
 }
 
 
