@@ -240,9 +240,6 @@ status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, vo
     /* Block for freeze mode entry */
     while(!(CAN0->CAN0_MCR_b.FRZACK));
 
-    /* Enable local priority for transmission */
-    CAN0->CAN0_MCR_b.LPRIOEN = CAN0_MCR_LPRIOEN_1;
-
     /* Enable CAN-FD feature in ISO 11898-1 compliance */
     CAN0->CAN0_MCR_b.FDEN = CAN0_MCR_FDEN_1;
     CAN0->CAN0_CTRL2_b.ISOCANFDEN = CAN0_CTRL2_ISOCANFDEN_1;
@@ -259,7 +256,7 @@ status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, vo
     CAN0->CAN0_FDCBT_b.FPRESDIV = timings.FPRESDIV;
     CAN0->CAN0_FDCBT_b.FPROPSEG = timings.FPROPSEG;
     CAN0->CAN0_FDCBT_b.FPSEG1   = timings.FPSEG1;
-    CAN0->CAN0_FDCBT_b.FPSEG2   = timings.EPSEG2;
+    CAN0->CAN0_FDCBT_b.FPSEG2   = timings.FPSEG2;
     CAN0->CAN0_FDCBT_b.FRJW     = timings.FRJW;
 
     CAN0->CAN0_FDCTRL_b.FDRATE = CAN0_FDCTRL_FDRATE_1;  	/* Enable bit rate switch in data phase of frame */
@@ -269,6 +266,12 @@ status_t FlexCAN0_Init(CANFD_bitrate_profile_t profile, uint8_t irq_priority, vo
 
     CAN0->CAN0_MCR_b.SRXDIS = CAN0_MCR_SRXDIS_1; 			/* Disable self-reception of frames if ID matches */
     CAN0->CAN0_MCR_b.IRMQ   = CAN0_MCR_IRMQ_1;   			/* Enable individual message buffer ID masking */
+
+    /* Clear message buffers RAM */
+    for(uint32_t i = 0x80; i < 0x27C+1; i+=4)
+    {
+        *(uint32_t*)(CAN0_BASE + i) = 0;
+    }
 
     /* Exit from freeze mode */
     CAN0->CAN0_MCR_b.HALT = CAN0_MCR_HALT_0;

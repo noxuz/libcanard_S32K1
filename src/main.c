@@ -23,17 +23,18 @@
 #include "S32K146_bitfields.h"
 #include "s32_core_cm4.h"
 
+
 #define FRAME_UNLOAD_PERIOD_MILI (500u)
 #define FRAME_UNLOAD_IRQ_PRIO 	 (2u)
 #define FLEXCAN_RX_IRQ_PRIO   	 (1u)
 
-// Linker file symbols for o1heap allcator
-void* __HeapBasee = (void*)0x200000a0;
-size_t HEAP_SIZEe = 0x8000;
+// Linker file symbols for o1heap allocator
+extern int __HeapBase[];
+extern int HEAP_SIZE[];
 
 // allocator and instance declaration for wrappers
 O1HeapInstance* my_allocator;
-CanardInstance ins;
+volatile CanardInstance ins;
 
 // Wrappers for using o1heap allocator with libcanard
 static void* memAllocate(CanardInstance* const ins, const size_t amount);
@@ -43,6 +44,7 @@ static void memFree(CanardInstance* const ins, void* const pointer);
 void FlexCAN0_reception_callback(void);
 void abort(void);
 void process_canard_TX_queue();
+void sleep_1sec();
 void UCANS32K146_PIN_MUX();
 void greenLED_init(void);
 void greenLED_toggle(void);
@@ -59,10 +61,10 @@ uint8_t hbeat_ser_buf[uavcan_node_Heartbeat_1_0_EXTENT_BYTES_];
 int main(void) {
 
 	// Initialization of o1heap allocator for libcanard
-	my_allocator = o1heapInit(__HeapBasee, HEAP_SIZEe, NULL, NULL);
+	my_allocator = o1heapInit((void*)__HeapBase, (size_t)HEAP_SIZE, NULL, NULL);
 
 	// Initialization of a canard instance with the previous allocator
-	CanardInstance ins = canardInit(&memAllocate, &memFree);
+	ins = canardInit(&memAllocate, &memFree);
 	ins.mtu_bytes = CANARD_MTU_CAN_FD;
 	ins.node_id = 96;
 
@@ -117,22 +119,17 @@ int main(void) {
 		// Increment the transfer_id variable
 		++my_message_transfer_id;
 
-		// Push the transfer to the tx queue
-		int32_t result2 = canardTxPush(&ins, &transfer);
+		// Push the transfer to the tx queue atomically
+		DISABLE_INTERRUPTS()
+		int32_t result2 = canardTxPush((CanardInstance* const)&ins, &transfer);
+		ENABLE_INTERRUPTS()
 
 		if(result2 < 0) { abort(); }
 
-		// Block for a second for generating the next transfer and increase uptime
-		uint64_t initial_time = LPIT0_GetTimestamp();
-		uint64_t delta = 0;
-		const uint64_t cycles_second = 80e6;
+		// Block for a second for generating the next transfer
+		sleep_1sec();
 
-		while(delta < cycles_second)
-		{
-			uint64_t cur_time = LPIT0_GetTimestamp();
-			delta = cur_time - initial_time;
-		}
-
+		// Increase uptime
 		test_uptimeSec++;
 
 		// Toggle LED at same frequency of transmission
@@ -167,11 +164,13 @@ void abort(void)
 
 void process_canard_TX_queue(void)
 {
+	DISABLE_INTERRUPTS()
+
 	/* Look at top of the TX queue of individual CANFD frames */
-	for(const CanardFrame* txf = NULL; (txf = canardTxPeek(&ins)) != NULL;)
+	for(const CanardFrame* txf = NULL; (txf = canardTxPeek((CanardInstance* const)&ins)) != NULL;)
 	{
-		/* Ensure TX deadline has not expired */
-		if(txf->timestamp_usec > LPIT0_GetTimestamp())
+		/* Ensure TX deadline has not expired or not used */
+		if((0U == txf->timestamp_usec) || (txf->timestamp_usec > LPIT0_GetTimestamp()))
 		{
 			/* Instantiate a fdframe for the media layer */
 			fdframe_t txframe;
@@ -187,10 +186,25 @@ void process_canard_TX_queue(void)
 		}
 
 		/* Remove the frame from the queue after a successful transmission */
-		canardTxPop(&ins);
+		canardTxPop((CanardInstance* const)&ins);
 		/* Deallocation of the memory utilized by that frame popped */
-		ins.memory_free(&ins, (CanardFrame*)txf);
+		ins.memory_free((CanardInstance* const)&ins, (CanardFrame*)txf);
 
+	}
+
+	ENABLE_INTERRUPTS()
+}
+
+void sleep_1sec(void)
+{
+	uint64_t initial_time = LPIT0_GetTimestamp();
+	uint64_t delta = 0;
+	const uint64_t cycles_second = 80e6;
+
+	while(delta < cycles_second)
+	{
+		uint64_t cur_time = LPIT0_GetTimestamp();
+		delta = cur_time - initial_time;
 	}
 }
 
