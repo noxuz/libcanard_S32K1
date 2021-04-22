@@ -139,6 +139,28 @@ int main(void) {
 	// Block waiting for reception interrupts to happen
 	for(;;)
 	{
+
+	}
+
+	return 0;
+}
+
+
+static void* memAllocate(CanardInstance* const ins, const size_t amount)
+{
+    (void) ins;
+    return o1heapAllocate(my_allocator, amount);
+}
+
+static void memFree(CanardInstance* const ins, void* const pointer)
+{
+    (void) ins;
+    o1heapFree(my_allocator, pointer);
+}
+
+
+void FlexCAN0_reception_callback(void)
+{
 		// Harvest the received frame from FlexCAN, verify that the message buffer 0 actually received
 		if(CAN0->CAN0_IFLAG1_b.BUF0I)
 		{
@@ -204,29 +226,6 @@ int main(void) {
 		CAN0->CAN0_IFLAG1_b.BUF0I = 1;
 
 		}
-
-	}
-
-	return 0;
-}
-
-
-static void* memAllocate(CanardInstance* const ins, const size_t amount)
-{
-    (void) ins;
-    return o1heapAllocate(my_allocator, amount);
-}
-
-static void memFree(CanardInstance* const ins, void* const pointer)
-{
-    (void) ins;
-    o1heapFree(my_allocator, pointer);
-}
-
-
-void FlexCAN0_reception_callback(void)
-{
-
 }
 
 void abort(void)
